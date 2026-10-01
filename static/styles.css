@@ -1,0 +1,2 @@
+body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+.item-chip { display: flex; justify-content: space-between; align-items: center; gap: 6px; }

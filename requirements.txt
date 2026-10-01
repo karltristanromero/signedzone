@@ -1,0 +1,21 @@
+# Web framework
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# Form parsing -- REQUIRED for the /upload endpoint (UploadFile/File)
+python-multipart>=0.0.9
+
+# uvicorn CLI + FastAPI/Starlette transitive deps (pinned explicitly so a
+# failed install can never leave the runtime half-wired)
+click>=8.1
+h11>=0.14
+anyio>=4.0
+sniffio>=1.3
+
+# PDF engine
+pymupdf>=1.24
+pypdf>=4.0
+
+# Test suite
+pytest>=8.0
+httpx>=0.27
