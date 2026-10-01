@@ -63,6 +63,11 @@
         <button id="prevPage" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&larr;</button>
         <span class="text-sm text-slate-600">Page <span id="pageNum">1</span> / <span id="pageCount">1</span></span>
         <button id="nextPage" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&rarr;</button>
+        <div class="flex items-center gap-0.5 ml-1 text-xs border rounded text-slate-600 bg-white">
+          <button data-zoom-step="-1" type="button" title="Zoom out" class="px-1.5 py-1 hover:bg-slate-100 rounded">&minus;</button>
+          <span data-zoom-val class="tabular-nums w-11 text-center">140%</span>
+          <button data-zoom-step="1" type="button" title="Zoom in" class="px-1.5 py-1 hover:bg-slate-100 rounded">+</button>
+        </div>
       </div>
       <div class="flex flex-wrap items-center gap-2 justify-end">
         <!-- Staged-image controls: only visible once + Image has picked a file -->
@@ -82,10 +87,39 @@
         <button id="saveVersion" class="text-sm bg-indigo-600 text-white rounded px-3 py-1 hover:bg-indigo-500">Save New Version</button>
       </div>
     </div>
+    <!-- Comparison is a separate, reversible view: it never mutates
+         #canvasWrap, so "Back to editor" restores the working pane untouched. -->
+    <div id="compareBar" class="hidden flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200 pl-12">
+      <div class="flex items-center gap-2 min-w-0">
+        <span id="compareMode" class="text-sm font-semibold text-slate-700 truncate">Side by side</span>
+        <span class="hidden sm:block text-xs text-slate-400 whitespace-nowrap">older revision first</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-3 justify-end">
+        <label id="opacityWrap" class="hidden items-center gap-1 text-xs text-slate-500 whitespace-nowrap">
+          Opacity
+          <input id="compareOpacity" type="range" min="0" max="100" value="50" class="w-24 accent-indigo-600" />
+          <span id="opacityVal" class="tabular-nums w-8 text-slate-400">50%</span>
+        </label>
+        <div class="flex items-center gap-0.5 text-xs border rounded text-slate-600 bg-white">
+          <button data-zoom-step="-1" type="button" title="Zoom out" class="px-1.5 py-1 hover:bg-slate-100 rounded">&minus;</button>
+          <span data-zoom-val class="tabular-nums w-11 text-center">140%</span>
+          <button data-zoom-step="1" type="button" title="Zoom in" class="px-1.5 py-1 hover:bg-slate-100 rounded">+</button>
+        </div>
+        <label class="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap cursor-pointer select-none"
+               title="Link paging, scrolling and zoom across both panes">
+          <input id="compareSync" type="checkbox" checked class="accent-indigo-600" />
+          Sync
+        </label>
+        <button id="exitCompare" type="button" class="text-sm border rounded px-3 py-1 hover:bg-slate-100">Back to editor</button>
+      </div>
+    </div>
+
+    <div id="compareWrap" class="hidden flex-1 min-h-0 flex gap-3 bg-slate-200 p-4 overflow-hidden"></div>
+
     <div id="canvasWrap" class="relative flex-1 min-h-0 overflow-auto bg-slate-200 p-4">
       <canvas id="pdfCanvas" class="block mx-auto bg-white shadow"></canvas>
     </div>
-    <div class="px-3 py-2 border-t border-slate-200 space-y-2">
+    <div id="editFooter" class="px-3 py-2 border-t border-slate-200 space-y-2">
       <ul id="itemList" class="hidden flex-wrap items-center gap-1 text-xs text-slate-600"></ul>
       <div class="flex items-center gap-2">
         <input id="changeSummary" type="text" placeholder="Change summary for this revision"
