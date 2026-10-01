@@ -223,8 +223,14 @@ def test_spa_is_served(client):
     # The page must never be able to scroll into empty space below the app.
     assert "100vh" not in res.text
     assert 'class="h-screen overflow-hidden' in res.text
-    # A bounded grid row is what gives #canvasWrap a working scrollbar.
-    assert "lg:grid-rows-1" in res.text
+    # main is a bounded flex row: its children stretch to its height, so
+    # #canvasWrap gets a working scrollbar instead of growing into empty space.
+    assert '<main class="relative flex-1 min-h-0 flex' in res.text
+    # The documents pane hangs off a hamburger toggle, and the image pane is gone.
+    assert 'id="sidebarToggle"' in res.text
+    assert 'id="sidebar"' in res.text
+    assert res.text.count("<aside") == 1
+    assert "imagePanel" not in res.text
     # #canvasWrap must be the overlay's containing block, or the overlay desyncs
     # from the canvas as soon as the pane is scrolled.
     assert 'id="canvasWrap" class="relative' in res.text

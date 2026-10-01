@@ -75,13 +75,21 @@ points, origin top-left**, from `getViewport({scale:1})`; `page` is **0-based**
   caps `w`/`h` to the page then pins `x`/`y` into `0 .. page - size`, on create,
   move and resize alike. `drawOverlay()` scales points by `state.scale` and
   previews placed images from `imgCache` at 70% alpha.
-- Two layout rules the viewer cannot work without: `main` needs `lg:grid-rows-1`
-  (a grid row defaults to `auto` = *content* height, so the pane grows to the whole
-  canvas, `lg:overflow-hidden` clips it, and the scrollbar dies), and
+- Layout rules the viewer cannot work without: `main` must stay a *bounded* flex
+  row (`relative flex-1 min-h-0 flex`) inside `body: h-screen overflow-hidden
+  flex flex-col` — its children stretch to its height, which is what gives
+  `#canvasWrap` a working scrollbar instead of growing into empty space — and
   `#canvasWrap` needs `relative` (otherwise the overlay's containing block is the
   viewport, it doesn't scroll with the canvas, and hit-testing drifts by the
-  scroll offset). Layout is `body: h-screen overflow-hidden flex flex-col` +
-  `main: flex-1 min-h-0`; never reintroduce `calc(100vh-Npx)` header arithmetic.
+  scroll offset). Never reintroduce `calc(100vh-Npx)` header arithmetic.
+- There is no left/right pane pair any more: `#sidebar` (documents + revisions)
+  hangs off the floating toggle (`#sidebarToggle`, absolute top-left of `main`) via `setSidebar()`, which
+  shows it as an inline column on `lg+` and as an absolute drawer over the viewer
+  below that; because toggling moves the canvas, `setSidebar()` re-runs
+  `renderPage()` on the next frame or the overlay detaches. The image staging
+  controls live in the toolbar's `#stagedBar` (visible only while an image is
+  staged) and the placed-item chips in `#itemList` under the canvas — both hide
+  themselves when empty.
 - Handlers are fire-and-forget async, so an `unhandledrejection` listener plus a
   try/catch in `saveVersion` surface failures as toasts. Don't add a bare
   `await api(...)`.

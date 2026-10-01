@@ -10,21 +10,30 @@
 </head>
 <body class="h-screen overflow-hidden bg-slate-100 text-slate-800 flex flex-col">
 
-<header class="flex-none bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
-  <div>
+<header class="flex-none bg-slate-900 text-white px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-3">
+  <div class="min-w-0">
     <h1 class="text-xl font-semibold tracking-tight">Signly</h1>
-    <p class="text-xs text-slate-400">Image insertion with immutable revisions</p>
+    <p class="text-xs text-slate-400 truncate">Image insertion with immutable revisions</p>
   </div>
-  <label class="bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium px-4 py-2 rounded cursor-pointer">
+  <label class="whitespace-nowrap bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium px-4 py-2 rounded cursor-pointer">
     Upload PDF
     <input id="uploadInput" type="file" accept="application/pdf" class="hidden" />
   </label>
 </header>
 
-<main class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-4 lg:grid-rows-1 gap-4 p-4 overflow-y-auto lg:overflow-hidden">
+<main class="relative flex-1 min-h-0 flex gap-4 p-4 overflow-hidden">
 
-  <!-- Document + version sidebar -->
-  <aside class="lg:col-span-1 flex flex-col gap-4 min-h-0 overflow-y-auto">
+  <!-- Floating sidebar toggle: overlays the top-left corner of main, above
+       both the viewer and the sidebar drawer. -->
+  <button id="sidebarToggle" type="button" title="Toggle sidebar" aria-label="Toggle sidebar" aria-expanded="false"
+          class="absolute left-4 top-4 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-lg text-white shadow-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">&#9776;</button>
+
+  <!-- Document + version sidebar: hidden behind the floating toggle.
+       Inline column on lg+, floating drawer below that. -->
+  <aside id="sidebar"
+         class="hidden w-64 lg:w-72 flex-none flex-col gap-4 min-h-0 overflow-y-auto
+                max-lg:absolute max-lg:left-0 max-lg:top-0 max-lg:bottom-0 max-lg:z-40
+                max-lg:w-72 max-lg:bg-slate-100 max-lg:rounded-lg max-lg:shadow-xl max-lg:p-3">
     <section class="flex-none bg-white rounded-lg shadow p-3">
       <h2 class="text-sm font-semibold uppercase text-slate-500 mb-2">Documents</h2>
       <ul id="docList" class="space-y-1 text-sm"></ul>
@@ -48,62 +57,45 @@
   </aside>
 
   <!-- Viewer -->
-  <section class="lg:col-span-2 flex flex-col min-h-0 bg-white rounded-lg shadow overflow-hidden">
-    <div class="flex items-center justify-between px-3 py-2 border-b border-slate-200">
+  <section class="flex-1 min-w-0 flex flex-col min-h-0 bg-white rounded-lg shadow overflow-hidden">
+    <div id="viewerBar" class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200 pl-12">
       <div class="flex items-center gap-2">
         <button id="prevPage" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&larr;</button>
         <span class="text-sm text-slate-600">Page <span id="pageNum">1</span> / <span id="pageCount">1</span></span>
         <button id="nextPage" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&rarr;</button>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2 justify-end">
+        <!-- Staged-image controls: only visible once + Image has picked a file -->
+        <div id="stagedBar" class="hidden flex-wrap items-center gap-2 lg:pr-2 lg:mr-1 lg:border-r lg:border-slate-200">
+          <img id="imagePreview" class="hidden h-7 w-7 object-cover rounded border border-slate-200 bg-white" alt="" />
+          <span id="imageMeta" class="hidden max-w-[9rem] truncate text-xs text-slate-500"></span>
+          <label for="imgWidth" class="text-xs text-slate-500 whitespace-nowrap">Width</label>
+          <input id="imgWidth" type="number" value="25" min="1" max="100"
+                 class="w-14 border rounded px-1 py-0.5 text-xs" />
+          <span class="text-xs text-slate-400">% of page</span>
+          <button id="placeCentre" class="text-xs bg-emerald-600 text-white rounded px-2 py-1 hover:bg-emerald-500">Place in centre</button>
+          <button id="clearImage" class="text-xs border rounded px-2 py-1 hover:bg-slate-100">Clear</button>
+        </div>
         <button id="addText" class="text-sm bg-slate-800 text-white rounded px-3 py-1 hover:bg-slate-700">+ Text box</button>
-        <button id="openPlace" class="text-sm bg-emerald-600 text-white rounded px-3 py-1 hover:bg-emerald-500">+ Image</button>        <button id="saveVersion" class="text-sm bg-indigo-600 text-white rounded px-3 py-1 hover:bg-indigo-500">Save New Version</button>
+        <button id="openPlace" class="text-sm bg-emerald-600 text-white rounded px-3 py-1 hover:bg-emerald-500">+ Image</button>
+        <input id="imageInput" type="file" accept="image/*" class="hidden" />
+        <button id="saveVersion" class="text-sm bg-indigo-600 text-white rounded px-3 py-1 hover:bg-indigo-500">Save New Version</button>
       </div>
     </div>
     <div id="canvasWrap" class="relative flex-1 min-h-0 overflow-auto bg-slate-200 p-4">
       <canvas id="pdfCanvas" class="block mx-auto bg-white shadow"></canvas>
     </div>
-    <div class="px-3 py-2 border-t border-slate-200">
-      <input id="changeSummary" type="text" placeholder="Change summary for this revision"
-             class="w-full text-sm border rounded px-2 py-1" />
+    <div class="px-3 py-2 border-t border-slate-200 space-y-2">
+      <ul id="itemList" class="hidden flex-wrap items-center gap-1 text-xs text-slate-600"></ul>
+      <div class="flex items-center gap-2">
+        <input id="changeSummary" type="text" placeholder="Change summary for this revision"
+               class="flex-1 min-w-0 text-sm border rounded px-2 py-1" />
+        <span class="hidden sm:block whitespace-nowrap text-[11px] text-slate-400">
+          Corner resizes &middot; <span class="font-mono">Del</span> removes
+        </span>
+      </div>
     </div>
   </section>
-
-  <!-- Image staging / placement panel -->
-  <aside class="lg:col-span-1 flex flex-col gap-4 min-h-0 overflow-y-auto">
-    <section id="imagePanel" class="flex-none bg-white rounded-lg shadow p-3">
-      <h2 class="text-sm font-semibold uppercase text-slate-500 mb-2">Insert image</h2>
-      <div id="imageEmpty" class="border border-dashed border-slate-300 rounded p-4 text-center text-xs text-slate-400">
-        No image selected
-      </div>
-      <img id="imagePreview" class="hidden w-full max-h-48 object-contain border border-slate-200 rounded bg-white" alt="" />
-      <p id="imageMeta" class="mt-1 text-xs text-slate-500 truncate"></p>
-      <label class="mt-2 block bg-slate-800 text-white text-xs font-medium px-3 py-1.5 rounded cursor-pointer hover:bg-slate-700 text-center">
-        Choose image
-        <input id="imageInput" type="file" accept="image/*" class="hidden" />
-      </label>
-      <div class="mt-2 flex items-center gap-2">
-        <label for="imgWidth" class="text-xs text-slate-500 whitespace-nowrap">Width</label>
-        <input id="imgWidth" type="number" value="25" min="1" max="100"
-               class="w-16 border rounded px-1 py-0.5 text-xs" />
-        <span class="text-xs text-slate-400">% of page</span>
-      </div>
-      <div class="flex gap-2 mt-2">
-        <button id="clearImage" class="flex-1 text-xs border rounded py-1 hover:bg-slate-100">Clear</button>
-        <button id="placeCentre" class="flex-1 text-xs bg-emerald-600 text-white rounded py-1 hover:bg-emerald-500">Place in centre</button>
-      </div>
-      <p class="mt-2 text-[11px] leading-snug text-slate-400">
-        Click the page to place. Drag an item to move it, drag its bottom-right
-        corner to resize, press <span class="font-mono">Delete</span> to remove.
-        Items are always kept inside the page.
-      </p>
-    </section>
-
-    <section class="bg-white rounded-lg shadow p-3 flex-1 min-h-[8rem]">
-      <h2 class="text-sm font-semibold uppercase text-slate-500 mb-2">Placed items</h2>
-      <ul id="itemList" class="space-y-1 text-xs text-slate-600"></ul>
-    </section>
-  </aside>
 </main>
 
 <div id="toast" class="hidden fixed bottom-4 right-4 bg-slate-900 text-white text-sm px-4 py-2 rounded shadow z-50"></div>

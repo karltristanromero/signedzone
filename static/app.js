@@ -187,7 +187,8 @@ function newImageAt(px, py) {
   const pct = Math.min(100, Math.max(1, parseFloat($("imgWidth").value) || 25));
   const w = state.pageSize.width * (pct / 100);
   const h = w * (state.image.height / state.image.width);
-  const item = clampToPage({
+  // Only builds the item: every caller pushes it into state.items itself.
+  return clampToPage({
     kind: "image",
     page: pageIndex(),
     x: px - w / 2,
@@ -196,8 +197,6 @@ function newImageAt(px, py) {
     h,
     data: state.image.data,
   });
-  state.items.push(item);
-  return item;
 }
 
 function drawOverlay() {
@@ -317,18 +316,18 @@ document.addEventListener("keydown", (e) => {
 function renderItemList() {
   const ul = $("itemList");
   ul.innerHTML = "";
-  if (!state.items.length) {
-    ul.innerHTML = '<li class="text-slate-400">Nothing placed yet</li>';
-    return;
-  }
+  const has = state.items.length > 0;
+  ul.classList.toggle("hidden", !has);
+  ul.classList.toggle("flex", has);
+  if (!has) return;
   state.items.forEach((it, idx) => {
     const li = document.createElement("li");
     li.className =
-      "item-chip border rounded px-2 py-1 cursor-pointer " +
+      "item-chip flex items-center gap-1 border rounded px-2 py-0.5 cursor-pointer " +
       (idx === state.selected ? "border-indigo-500 bg-indigo-50" : "hover:bg-slate-50");
     const label =
       it.kind === "image" ? `Image p${it.page + 1}` : `"${it.text}" p${it.page + 1}`;
-    li.innerHTML = `<span class="truncate">${label}</span>`;
+    li.innerHTML = `<span class="truncate max-w-[9rem]">${label}</span>`;
     li.onclick = () => {
       state.selected = idx;
       if (it.page !== pageIndex()) state.page = it.page + 1;
@@ -349,12 +348,35 @@ function renderItemList() {
   });
 }
 
+/* ---------- sidebar ---------- */
+
+const desktopMQ = window.matchMedia("(min-width: 1024px)");
+
+const sidebarOpen = () => !$("sidebar").classList.contains("hidden");
+
+function setSidebar(open) {
+  const sb = $("sidebar");
+  sb.classList.toggle("hidden", !open);
+  sb.classList.toggle("flex", open);
+  // The toggle floats over main's top-left corner: clear room for it — below
+  // the sidebar content when open, in the viewer toolbar when closed.
+  sb.classList.toggle("pt-14", open);
+  $("viewerBar").classList.toggle("pl-12", !open);
+  $("sidebarToggle").setAttribute("aria-expanded", String(open));
+  // Toggling changes the viewer's width, so re-anchor the overlay to the canvas.
+  requestAnimationFrame(() => {
+    if (state.pdf) renderPage();
+  });
+}
+
 /* ---------- document lifecycle ---------- */
 
 async function openDocument(docId) {
   state.docId = docId;
   state.items = [];
   state.selected = -1;
+  // Below lg the sidebar floats over the viewer — put it away once used.
+  if (!desktopMQ.matches) setSidebar(false);
   await loadVersions(docId);
   await loadPdf(1);
 }
@@ -415,10 +437,19 @@ $("addText").onclick = async () => {
 function clearStagedImage() {
   state.image = null;
   $("imagePreview").classList.add("hidden");
-  $("imageEmpty").classList.remove("hidden");
+  $("imageMeta").classList.add("hidden");
   $("imageMeta").textContent = "";
   $("imageInput").value = "";
+  setStagedBar(false);
   overlay.style.cursor = "default";
+}
+
+/* The staging controls live in the viewer toolbar and only appear while an
+   image is staged, so they cost no space otherwise. */
+function setStagedBar(on) {
+  const bar = $("stagedBar");
+  bar.classList.toggle("hidden", !on);
+  bar.classList.toggle("flex", on);
 }
 
 $("imageInput").onchange = async (e) => {
@@ -468,8 +499,9 @@ $("imageInput").onchange = async (e) => {
     imgCache.set(state.image.data, el);
     $("imagePreview").src = png;
     $("imagePreview").classList.remove("hidden");
-    $("imageEmpty").classList.add("hidden");
     $("imageMeta").textContent = `${file.name} — ${cv.width}x${cv.height} PNG`;
+    $("imageMeta").classList.remove("hidden");
+    setStagedBar(true);
     overlay.style.cursor = "copy";
     toast("Image loaded — click anywhere on the page to place it.");
   } catch (err) {
@@ -579,6 +611,16 @@ async function comparePair(mode) {
 
 $("compareSide").onclick = () => comparePair("side");
 $("compareOverlay").onclick = () => comparePair("overlay");
+
+$("sidebarToggle").onclick = () => setSidebar(!sidebarOpen());
+
+// Below lg the sidebar is a drawer over the viewer: dismiss it on an outside
+// tap so it can never strand the page.
+document.addEventListener("click", (e) => {
+  if (desktopMQ.matches || !sidebarOpen()) return;
+  if ($("sidebar").contains(e.target) || $("sidebarToggle").contains(e.target)) return;
+  setSidebar(false);
+});
 
 window.addEventListener("resize", () => state.pdf && renderPage());
 
