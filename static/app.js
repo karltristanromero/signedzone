@@ -395,7 +395,11 @@ async function openDocument(docId) {
   // Below lg the sidebar floats over the viewer — put it away once used.
   if (!desktopMQ.matches) setSidebar(false);
   await loadVersions(docId);
-  await loadPdf(1);
+  // Open the newest revision rather than v1: /versions comes back ascending, so the
+  // last entry is the latest. Keeps state.version in step with what is on screen.
+  const latest = state.versions.length ? state.versions[state.versions.length - 1].version_number : 1;
+  state.version = latest;
+  await loadPdf(latest);
 }
 
 async function openVersion(version) {
