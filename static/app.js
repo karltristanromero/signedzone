@@ -13,6 +13,16 @@ const state = {
   items: [], // { kind: 'image'|'text', page, x, y, w, h, text?, data? }
   image: null, // { data, width, height } — the image staged for placement
   selected: -1, // index into state.items, -1 for none
+  compare: {
+    active: false, // the read-only comparison view is showing
+    loading: false, // a comparePair request is in flight
+    mode: "side", // "side" | "overlay"
+    sync: true, // mirror scrolling between panes
+    opacity: 0.5, // alpha of the newer revision in overlay mode
+    panes: [], // { layers, page, pageCount, scale, scroller, canvas, ctx, pageEl }
+    focus: 0, // pane the compare-bar zoom and page turns act on
+    scrollLock: false, // breaks the sync-scroll feedback loop
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -135,6 +145,12 @@ async function renderPage() {
   drawOverlay();
 
   $("pageNum").textContent = state.page;
+}
+
+/* Repaint whichever view is live: the editor canvas or the compare panes. */
+function repaint() {
+  if (state.compare.active) state.compare.panes.forEach(renderPane);
+  else if (state.pdf) renderPage();
 }
 
 const imgCache = new Map();
@@ -362,11 +378,10 @@ function setSidebar(open) {
   // the sidebar content when open, in the viewer toolbar when closed.
   sb.classList.toggle("pt-14", open);
   $("viewerBar").classList.toggle("pl-12", !open);
+  $("compareBar").classList.toggle("pl-12", !open);
   $("sidebarToggle").setAttribute("aria-expanded", String(open));
-  // Toggling changes the viewer's width, so re-anchor the overlay to the canvas.
-  requestAnimationFrame(() => {
-    if (state.pdf) renderPage();
-  });
+  // Toggling changes the viewer's width, so re-anchor whichever view is live.
+  requestAnimationFrame(repaint);
 }
 
 /* ---------- document lifecycle ---------- */
@@ -375,6 +390,8 @@ async function openDocument(docId) {
   state.docId = docId;
   state.items = [];
   state.selected = -1;
+  // A comparison belongs to the document it was opened from.
+  if (state.compare.active) await exitCompare(true);
   // Below lg the sidebar floats over the viewer — put it away once used.
   if (!desktopMQ.matches) setSidebar(false);
   await loadVersions(docId);
@@ -382,6 +399,7 @@ async function openDocument(docId) {
 }
 
 async function openVersion(version) {
+  if (state.compare.active) await exitCompare(true);
   state.version = version;
   state.items = [];
   state.selected = -1;
@@ -528,6 +546,8 @@ $("placeCentre").onclick = () => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  // Escape leaves the read-only comparison before it clears a selection.
+  if (state.compare.active) return exitCompare();
   state.selected = -1;
   drawOverlay();
 });
@@ -565,52 +585,293 @@ $("saveVersion").onclick = async () => {
   }
 };
 
-/* ---------- comparison ---------- */
+/* ---------- zoom ---------- */
 
-function renderCompare(canvases) {
-  const wrap = $("canvasWrap");
-  wrap.innerHTML = "";
-  wrap.style.display = "flex";
-  wrap.style.gap = "12px";
-  canvases.forEach((c) => wrap.appendChild(c));
-  overlay.remove();
-  toast("Comparison view — reload the document to return");
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 0.1;
+
+const clampZoom = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 100) / 100));
+
+/* A diff is only useful if both panes show the same magnification, so while Sync
+   is on one zoom click moves every pane and the working pane together. With Sync
+   off each pane keeps its own scale, which is how you zoom one region of a
+   revision against a full-page view of the other. */
+function applyZoom(target, scale) {
+  const s = clampZoom(scale);
+  if (state.compare.sync) {
+    state.scale = s;
+    state.compare.panes.forEach((p) => {
+      p.scale = s;
+    });
+  } else if (target === "editor") {
+    state.scale = s;
+  } else if (target) {
+    target.scale = s;
+  }
+  repaint();
+  renderZoom();
 }
 
-async function comparePair(mode) {
+/* The compare bar's buttons act on whichever pane was last paged or scrolled;
+   the editor bar's act on state.scale. */
+function zoomTarget(el) {
+  return el.closest("#compareBar") ? state.compare.panes[state.compare.focus] : "editor";
+}
+
+function stepZoom(el, dir) {
+  const target = zoomTarget(el);
+  if (target !== "editor" && !target) return;
+  applyZoom(target, (target === "editor" ? state.scale : target.scale) + dir * ZOOM_STEP);
+}
+
+function renderZoom() {
+  const editor = $("viewerBar").querySelector("[data-zoom-val]");
+  if (editor) editor.textContent = `${Math.round(state.scale * 100)}%`;
+  const compare = $("compareBar").querySelector("[data-zoom-val]");
+  if (!compare) return;
+  const pane = state.compare.panes[state.compare.focus];
+  compare.textContent = `${Math.round((pane ? pane.scale : state.scale) * 100)}%`;
+}
+
+document.querySelectorAll("[data-zoom-step]").forEach((btn) => {
+  btn.onclick = () => stepZoom(btn, Number(btn.dataset.zoomStep));
+});
+
+/* ---------- comparison ----------
+   A reversible, read-only view. It renders into its own #compareWrap and must
+   never touch #canvasWrap, #pdfCanvas or the overlay: that is what lets
+   exitCompare() hand the editor back exactly as it was, uncommitted
+   state.items included. Compare panes are viewers only — placing and saving
+   stay in the working pane. */
+
+const fraction = (v, max) => (max > 0 ? v / max : 0);
+
+/* Panes scroll in their own containers so two revisions of different page sizes
+   can be linked proportionally instead of sharing one scrollbar. */
+function saveScroll(pane) {
+  const s = pane.scroller;
+  return {
+    x: fraction(s.scrollLeft, s.scrollWidth - s.clientWidth),
+    y: fraction(s.scrollTop, s.scrollHeight - s.clientHeight),
+  };
+}
+
+function applyScroll(pane, saved) {
+  const s = pane.scroller;
+  const mx = s.scrollWidth - s.clientWidth;
+  const my = s.scrollHeight - s.clientHeight;
+  if (mx > 0) s.scrollLeft = saved.x * mx;
+  if (my > 0) s.scrollTop = saved.y * my;
+}
+
+function syncScroll(source) {
+  state.compare.focus = Math.max(0, state.compare.panes.indexOf(source));
+  if (!state.compare.active || !state.compare.sync || state.compare.scrollLock) return;
+  state.compare.scrollLock = true;
+  const from = saveScroll(source);
+  state.compare.panes.forEach((p) => {
+    if (p !== source) applyScroll(p, from);
+  });
+  // Released on the next frame: scroll events are dispatched per element, so
+  // clearing the lock synchronously would let the panes echo back and drift.
+  requestAnimationFrame(() => {
+    state.compare.scrollLock = false;
+  });
+}
+
+function paneEl(label, note) {
+  const el = document.createElement("div");
+  el.className = "flex-1 min-w-0 flex flex-col min-h-0";
+  el.innerHTML = `
+    <div class="flex items-center gap-2 pb-2 text-xs text-slate-600">
+      <span data-label class="font-semibold text-slate-800"></span>
+      <span data-note class="text-slate-400 truncate"></span>
+      <span class="flex-1"></span>
+      <button data-d="-1" type="button" title="Previous page" class="px-1.5 py-0.5 border rounded text-slate-500 hover:bg-slate-100">&larr;</button>
+      <span data-page class="tabular-nums whitespace-nowrap text-slate-500"></span>
+      <button data-d="1" type="button" title="Next page" class="px-1.5 py-0.5 border rounded text-slate-500 hover:bg-slate-100">&rarr;</button>
+    </div>
+    <div data-scroll class="relative flex-1 min-h-0 overflow-auto rounded bg-slate-300/40 p-2">
+      <canvas class="block mx-auto bg-white shadow"></canvas>
+    </div>`;
+  el.querySelector("[data-label]").textContent = label;
+  el.querySelector("[data-note]").textContent = note;
+  return el;
+}
+
+/* layers are ordered oldest -> newest, so index 0 is always the bottom. */
+async function buildPane(layers, label, base) {
+  const el = paneEl(label, "");
+  const pane = {
+    layers,
+    page: Math.min(Math.max(state.page, 1), Math.min(...layers.map((l) => l.doc.numPages))),
+    pageCount: Math.min(...layers.map((l) => l.doc.numPages)),
+    scale: state.scale,
+    scroller: el.querySelector("[data-scroll]"),
+    canvas: el.querySelector("canvas"),
+    ctx: null,
+    pageEl: el.querySelector("[data-page]"),
+  };
+  pane.ctx = pane.canvas.getContext("2d");
+  el.querySelectorAll("button[data-d]").forEach((btn) => {
+    btn.onclick = () => stepPane(pane, parseInt(btn.dataset.d, 10));
+  });
+  pane.scroller.addEventListener("scroll", () => syncScroll(pane));
+  el.querySelector("[data-note]").textContent = paneNote(pane, base);
+  $("compareWrap").appendChild(el);
+  return pane;
+}
+
+/* One turner moves every pane while Sync is on; each clamps to its own page
+   count, so revisions of different lengths stay side by side. */
+function stepPane(pane, delta) {
+  state.compare.focus = Math.max(0, state.compare.panes.indexOf(pane));
+  const targets = state.compare.sync ? state.compare.panes : [pane];
+  let moved = false;
+  targets.forEach((p) => {
+    const next = Math.min(Math.max(p.page + delta, 1), p.pageCount);
+    if (next === p.page) return;
+    p.page = next;
+    moved = true;
+  });
+  if (moved) targets.forEach(renderPane);
+}
+
+async function renderPane(pane) {
+  // Rapid clicks can leave two renders in flight; only the newest may paint.
+  const token = (pane.token = (pane.token || 0) + 1);
+  const scroll = saveScroll(pane);
+  // Each layer is drawn offscreen first: PDF.js paints straight into whatever
+  // context it is handed, so blending two of them in place would accumulate
+  // alpha instead of mixing them.
+  const shots = [];
+  for (const layer of pane.layers) {
+    const page = await layer.doc.getPage(Math.min(pane.page, layer.doc.numPages));
+    const vp = page.getViewport({ scale: pane.scale });
+    const off = document.createElement("canvas");
+    off.width = vp.width;
+    off.height = vp.height;
+    await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
+    shots.push(off);
+  }
+  if (token !== pane.token) return;
+  const base = shots[0];
+  pane.canvas.width = base.width;
+  pane.canvas.height = base.height;
+  pane.ctx.clearRect(0, 0, base.width, base.height);
+  pane.ctx.drawImage(base, 0, 0);
+  shots.slice(1).forEach((s) => {
+    pane.ctx.globalAlpha = state.compare.opacity;
+    pane.ctx.drawImage(s, 0, 0);
+    pane.ctx.globalAlpha = 1;
+  });
+  pane.pageEl.textContent = `Page ${pane.page} / ${pane.pageCount}`;
+  applyScroll(pane, scroll);
+}
+
+/* Revisions can differ in length; a pane can only show the pages they share. */
+function paneNote(pane, base) {
+  const extra = pane.layers
+    .filter((l) => l.doc.numPages !== pane.pageCount)
+    .map((l) => `v${l.version} has ${l.doc.numPages}`);
+  return extra.length ? `${base} · ${extra.join(", ")}` : base;
+}
+
+async function exitCompare(quiet = false) {
+  const wasActive = state.compare.active;
+  state.compare.active = false;
+  state.compare.panes.forEach((p) =>
+    p.layers.forEach((l) => Promise.resolve(l.doc.destroy()).catch(() => {}))
+  );
+  state.compare.panes = [];
+  $("compareWrap").innerHTML = "";
+  $("compareWrap").classList.add("hidden");
+  $("compareBar").classList.add("hidden");
+  $("canvasWrap").classList.remove("hidden");
+  $("viewerBar").classList.remove("hidden");
+  $("editFooter").classList.remove("hidden");
+  if (wasActive && !quiet) {
+    renderPage();
+    toast("Back to the editor");
+  }
+  renderZoom();
+}
+
+async function enterCompare(mode) {
+  if (!state.docId) return toast("Open a document first", true);
   const a = parseInt($("cmpA").value, 10);
   const b = parseInt($("cmpB").value, 10);
-  if (!a || !b) return toast("Need at least one version");
+  if (!a || !b) return toast("Need at least one version", true);
+  if (a === b) return toast("Pick two different revisions", true);
+  if (state.compare.loading) return;
+  state.compare.loading = true;
+  $("compareSide").disabled = true;
+  $("compareOverlay").disabled = true;
 
-  const load = async (v) => {
-    const doc = await pdfjsLib.getDocument(`/doc/${state.docId}/v${v}.pdf`).promise;
-    const page = await doc.getPage(1);
-    const vp = page.getViewport({ scale: state.scale });
-    const c = document.createElement("canvas");
-    c.width = vp.width;
-    c.height = vp.height;
-    c.className = "bg-white shadow";
-    await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
-    return c;
-  };
+  try {
+    // Sorted so the older revision is always the lower layer, whichever <select>
+    // the user happened to leave on top.
+    const versions = [a, b].sort((x, y) => x - y);
+    const docs = await Promise.all(
+      versions.map((v) => pdfjsLib.getDocument(`/doc/${state.docId}/v${v}.pdf`).promise)
+    );
+    await exitCompare(true);
+    state.compare.mode = mode;
+    state.compare.active = true;
+    state.compare.focus = 0;
 
-  const [ca, cb] = await Promise.all([load(a), load(b)]);
-  if (mode === "side") {
-    renderCompare([ca, cb]);
-  } else {
-    const merged = document.createElement("canvas");
-    merged.width = ca.width;
-    merged.height = ca.height;
-    const m = merged.getContext("2d");
-    m.drawImage(ca, 0, 0);
-    m.globalAlpha = 0.5;
-    m.drawImage(cb, 0, 0);
-    renderCompare([merged]);
+    $("canvasWrap").classList.add("hidden");
+    $("viewerBar").classList.add("hidden");
+    $("editFooter").classList.add("hidden");
+    $("compareBar").classList.remove("hidden");
+    $("compareWrap").classList.remove("hidden");
+    $("compareMode").textContent = mode === "side" ? "Side by side" : "Overlay (opacity)";
+    $("opacityWrap").classList.toggle("hidden", mode !== "overlay");
+    $("opacityWrap").classList.toggle("inline-flex", mode === "overlay");
+
+    if (mode === "side") {
+      state.compare.panes = [
+        await buildPane([{ version: versions[0], doc: docs[0] }], `v${versions[0]}`, "older — left"),
+        await buildPane([{ version: versions[1], doc: docs[1] }], `v${versions[1]}`, "newer — right"),
+      ];
+    } else {
+      state.compare.panes = [
+        await buildPane(
+          [
+            { version: versions[0], doc: docs[0] },
+            { version: versions[1], doc: docs[1] },
+          ],
+          `v${versions[0]} → v${versions[1]}`,
+          "newer blended on top"
+        ),
+      ];
+    }
+    await Promise.all(state.compare.panes.map(renderPane));
+    renderZoom();
+    toast(mode === "side" ? "Comparing side by side — older revision on the left" : "Comparing as an overlay — older revision underneath");
+  } finally {
+    state.compare.loading = false;
+    $("compareSide").disabled = false;
+    $("compareOverlay").disabled = false;
   }
 }
 
-$("compareSide").onclick = () => comparePair("side");
-$("compareOverlay").onclick = () => comparePair("overlay");
+$("compareSide").onclick = () => enterCompare("side");
+$("compareOverlay").onclick = () => enterCompare("overlay");
+$("exitCompare").onclick = () => exitCompare();
+
+$("compareSync").onchange = (e) => {
+  state.compare.sync = e.target.checked;
+};
+
+$("compareOpacity").oninput = (e) => {
+  state.compare.opacity = parseInt(e.target.value, 10) / 100;
+  $("opacityVal").textContent = `${e.target.value}%`;
+  // Only the overlay mode has more than one layer per pane.
+  const blended = state.compare.panes.find((p) => p.layers.length > 1);
+  if (blended) renderPane(blended);
+};
 
 $("sidebarToggle").onclick = () => setSidebar(!sidebarOpen());
 
@@ -622,6 +883,9 @@ document.addEventListener("click", (e) => {
   setSidebar(false);
 });
 
-window.addEventListener("resize", () => state.pdf && renderPage());
+window.addEventListener("resize", repaint);
+
+// Keep the readout honest even though the markup starts at the default scale.
+renderZoom();
 
 loadDocuments();
