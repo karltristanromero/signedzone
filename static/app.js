@@ -10,8 +10,9 @@ const state = {
   pageCount: 1,
   scale: 1.4,
   pageSize: { width: 0, height: 0 }, // current page box, in PDF points
-  items: [], // { kind: 'image'|'text', page, x, y, w, h, text?, data? }
+  items: [], // { kind: 'image'|'text', page, x, y, w, h, text?, size?, data? }
   image: null, // { data, width, height } — the image staged for placement
+  text: null, // { text, size } — the text staged for placement
   selected: -1, // index into state.items, -1 for none
   compare: {
     active: false, // the read-only comparison view is showing
@@ -141,7 +142,7 @@ async function renderPage() {
   overlay.style.top = `${canvasRect.top - wrapRect.top + wrap.scrollTop}px`;
   overlay.width = canvas.width;
   overlay.height = canvas.height;
-  overlay.style.cursor = state.image ? "copy" : "default";
+  overlay.style.cursor = state.image || state.text ? "copy" : "default";
   drawOverlay();
 
   $("pageNum").textContent = state.page;
@@ -308,6 +309,14 @@ overlay.onpointerdown = (e) => {
   if (state.image) {
     state.selected = state.items.push(newImageAt(x, y)) - 1;
     toast("Placed — drag to move, drag the corner to resize.");
+  } else if (state.text) {
+    syncStagedTextFromInputs();
+    if (!state.text.text.trim()) {
+      toast("Type some text first", true);
+    } else {
+      state.selected = state.items.push(newTextAt(x, y)) - 1;
+      toast("Placed — drag to move, drag the corner to resize.");
+    }
   } else {
     state.selected = -1;
   }
@@ -323,7 +332,7 @@ overlay.onpointermove = (e) => {
   const { x, y } = screenToPage(e);
   if (!drag) {
     overlay.style.cursor =
-      handleAt(x, y) >= 0 ? "nwse-resize" : state.image ? "copy" : "default";
+      handleAt(x, y) >= 0 ? "nwse-resize" : state.image || state.text ? "copy" : "default";
     return;
   }
   const it = state.items[drag.idx];
@@ -456,6 +465,9 @@ document.addEventListener("keydown", (e) => {
     } else if (state.image) {
       clearStagedImage();
       toast("Staged image cleared.");
+    } else if (state.text) {
+      clearStagedText();
+      toast("Staged text cleared.");
     }
     return;
   }
@@ -537,9 +549,10 @@ document.addEventListener("keydown", (e) => {
       drawOverlay();
       break;
     case "Enter":
-      if (!state.compare.active && state.image) {
+      if (!state.compare.active && !isTypingTarget() && (state.image || state.text)) {
         e.preventDefault();
-        placeCentre();
+        if (state.image) placeCentre();
+        else placeTextCentre();
       }
       break;
     case "ArrowLeft":
@@ -678,23 +691,87 @@ $("nextPage").onclick = async () => {
   }
 };
 
-$("addText").onclick = async () => {
-  if (!state.pdf) return toast("Upload a PDF first");
-  const text = prompt("Text to add:");
-  if (!text) return;
-  const page = await state.pdf.getPage(state.page);
-  const vp = page.getViewport({ scale: 1 });
-  state.items.push({
+/* ---------- text box staging (mirrors image insertion) ---------- */
+
+/* The text staging controls live in the viewer toolbar and only appear while
+   text is staged, so they cost no space otherwise. */
+function setTextBar(on) {
+  const bar = $("textStagedBar");
+  bar.classList.toggle("hidden", !on);
+  bar.classList.toggle("flex", on);
+}
+
+function stagedTextSize() {
+  const raw = parseFloat($("textSize").value);
+  if (!Number.isFinite(raw)) return 12;
+  return Math.min(72, Math.max(6, raw));
+}
+
+function syncStagedTextFromInputs() {
+  if (!state.text) return;
+  state.text.text = $("textContent").value;
+  state.text.size = stagedTextSize();
+}
+
+function clearStagedText() {
+  state.text = null;
+  $("textContent").value = "";
+  setTextBar(false);
+  if (!state.image) overlay.style.cursor = "default";
+}
+
+function newTextAt(px, py) {
+  const size = state.text.size || 12;
+  const w = state.pageSize.width * 0.5;
+  const h = Math.max(24, size * 1.5);
+  // Only builds the item: every caller pushes it into state.items itself.
+  return clampToPage({
     kind: "text",
     page: pageIndex(),
-    x: vp.width * 0.15,
-    y: vp.height * 0.15,
-    w: vp.width * 0.5,
-    h: 24,
-    text,
+    x: px - w / 2,
+    y: py - h / 2,
+    w,
+    h,
+    text: state.text.text,
+    size,
   });
-  drawOverlay();
+}
+
+$("addText").onclick = () => {
+  if (!state.pdf) return toast("Upload a PDF first");
+  if (state.text) {
+    $("textContent").focus();
+    return;
+  }
+  // Staging one kind clears the other so a page click is never ambiguous.
+  if (state.image) clearStagedImage();
+  state.text = { text: $("textContent").value || "", size: stagedTextSize() };
+  setTextBar(true);
+  overlay.style.cursor = "copy";
+  $("textContent").focus();
+  toast("Text staged — click anywhere on the page to place it.");
 };
+
+$("textContent").oninput = syncStagedTextFromInputs;
+$("textSize").oninput = syncStagedTextFromInputs;
+
+$("clearText").onclick = () => {
+  clearStagedText();
+  toast("Staged text cleared.");
+};
+
+function placeTextCentre() {
+  if (!state.pdf) return toast("Upload a PDF first");
+  if (!state.text) return toast("Stage a text box first", true);
+  syncStagedTextFromInputs();
+  if (!state.text.text.trim()) return toast("Type some text first", true);
+  state.selected = state.items.push(
+    newTextAt(state.pageSize.width / 2, state.pageSize.height / 2)
+  ) - 1;
+  drawOverlay();
+}
+
+$("placeTextCentre").onclick = placeTextCentre;
 
 /* ---------- image insertion ---------- */
 
@@ -705,7 +782,7 @@ function clearStagedImage() {
   $("imageMeta").textContent = "";
   $("imageInput").value = "";
   setStagedBar(false);
-  overlay.style.cursor = "default";
+  if (!state.text) overlay.style.cursor = "default";
 }
 
 /* The staging controls live in the viewer toolbar and only appear while an
@@ -761,6 +838,7 @@ $("imageInput").onchange = async (e) => {
 
     state.image = { data: png.split(",")[1], width: cv.width, height: cv.height };
     imgCache.set(state.image.data, el);
+    if (state.text) clearStagedText();
     $("imagePreview").src = png;
     $("imagePreview").classList.remove("hidden");
     $("imageMeta").textContent = `${file.name} — ${cv.width}x${cv.height} PNG`;
@@ -809,7 +887,7 @@ async function saveVersion() {
     images: state.items
       .filter((i) => i.kind === "image")
       .map((i) => ({ page: i.page, x: i.x, y: i.y, w: i.w, h: i.h, data: i.data })),
-    text_boxes: state.items.filter((i) => i.kind === "text").map((i) => ({ page: i.page, x: i.x, y: i.y, w: i.w, h: i.h, text: i.text })),
+    text_boxes: state.items.filter((i) => i.kind === "text").map((i) => ({ page: i.page, x: i.x, y: i.y, w: i.w, h: i.h, text: i.text, size: i.size ?? 12 })),
   };
   if (!body.images.length && !body.text_boxes.length) {
     return toast("Nothing to save — place an image or a text box first", true);

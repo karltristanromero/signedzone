@@ -88,6 +88,16 @@
           <button id="placeCentre" title="Place in centre (Enter)" class="text-xs bg-emerald-600 text-white rounded px-2 py-1 hover:bg-emerald-500">Place in centre</button>
           <button id="clearImage" title="Clear staged image (Esc)" class="text-xs border rounded px-2 py-1 hover:bg-slate-100">Clear</button>
         </div>
+        <!-- Staged-text controls: only visible once + Text box stages text -->
+        <div id="textStagedBar" class="hidden flex-wrap items-center gap-2 lg:pr-2 lg:mr-1 lg:border-r lg:border-slate-200">
+          <input id="textContent" type="text" placeholder="Text to place…" maxlength="500"
+                 class="w-40 border rounded px-2 py-0.5 text-xs" />
+          <label for="textSize" class="text-xs text-slate-500 whitespace-nowrap">Size</label>
+          <input id="textSize" type="number" value="12" min="6" max="72"
+                 class="w-14 border rounded px-1 py-0.5 text-xs" />
+          <button id="placeTextCentre" title="Place in centre (Enter)" class="text-xs bg-emerald-600 text-white rounded px-2 py-1 hover:bg-emerald-500">Place in centre</button>
+          <button id="clearText" title="Clear staged text (Esc)" class="text-xs border rounded px-2 py-1 hover:bg-slate-100">Clear</button>
+        </div>
         <button id="addText" class="text-sm bg-slate-800 text-white rounded px-3 py-1 hover:bg-slate-700">+ Text box</button>
         <button id="openPlace" class="text-sm bg-emerald-600 text-white rounded px-3 py-1 hover:bg-emerald-500">+ Image</button>
         <input id="imageInput" type="file" accept="image/*" class="hidden" />
