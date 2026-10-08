@@ -258,8 +258,36 @@ function drawOverlay() {
 
 let drag = null;
 
+/* Middle-drag pans the working pane (plain or with Ctrl held — the modifier
+   is ignored, so "Ctrl + middle button" works too). It must branch before any
+   item logic so a middle press never moves, resizes or places anything, and it
+   calls preventDefault to kill the browser's middle-click autoscroll. */
+function startPan(e, scroller) {
+  e.preventDefault();
+  drag = {
+    mode: "pan",
+    scroller,
+    sx: e.clientX,
+    sy: e.clientY,
+    sl: scroller.scrollLeft,
+    st: scroller.scrollTop,
+  };
+  try {
+    (e.currentTarget || overlay).setPointerCapture(e.pointerId);
+  } catch {
+    /* pointer already released — the pointerup still clears drag */
+  }
+  const target = scroller === $("canvasWrap") ? overlay : scroller;
+  if (target && target.style) {
+    target.dataset.prevCursor = target.style.cursor || "";
+    target.style.cursor = "grabbing";
+  }
+}
+
 overlay.onpointerdown = (e) => {
   if (!state.pdf) return;
+  if (e.button === 1) return startPan(e, $("canvasWrap"));
+  if (e.button !== 0) return;
   const { x, y } = screenToPage(e);
   const resizing = handleAt(x, y);
   if (resizing >= 0) {
@@ -287,6 +315,11 @@ overlay.onpointerdown = (e) => {
 };
 
 overlay.onpointermove = (e) => {
+  if (drag && drag.mode === "pan") {
+    drag.scroller.scrollLeft = drag.sl - (e.clientX - drag.sx);
+    drag.scroller.scrollTop = drag.st - (e.clientY - drag.sy);
+    return;
+  }
   const { x, y } = screenToPage(e);
   if (!drag) {
     overlay.style.cursor =
@@ -310,22 +343,227 @@ overlay.onpointermove = (e) => {
 
 function endDrag(e) {
   if (!drag) return;
-  if (e && overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
+  const panTarget =
+    drag.mode === "pan" && drag.scroller === $("canvasWrap") ? overlay : null;
+  if (e) {
+    try {
+      const owner = e.currentTarget || overlay;
+      if (owner.hasPointerCapture && owner.hasPointerCapture(e.pointerId))
+        owner.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+  }
+  if (panTarget && panTarget.style) panTarget.style.cursor = panTarget.dataset.prevCursor || "default";
   drag = null;
 }
 
 overlay.onpointerup = endDrag;
 overlay.onpointercancel = endDrag;
+// Some browsers fire auxclick after a middle press; swallow it so it never
+// triggers item placement or text selection. The mousedown guard kills the
+// browser's middle-click autoscroll (pointerdown-preventDefault alone does
+// not reliably cancel it in Firefox).
+overlay.addEventListener("mousedown", (e) => {
+  if (e.button === 1) e.preventDefault();
+});
+overlay.addEventListener("auxclick", (e) => {
+  if (e.button === 1) e.preventDefault();
+});
+
+/* ---------- work-pane keybindings (editor + compare) ---------- */
+
+const isTypingTarget = () => {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+};
+
+async function stepEditorPage(delta) {
+  if (!state.pdf) return;
+  const next = Math.min(Math.max(state.page + delta, 1), state.pageCount);
+  if (next === state.page) return;
+  state.page = next;
+  await renderPage();
+}
+
+function nudgeSelected(dx, dy) {
+  const it = state.items[state.selected];
+  if (!it) return;
+  it.x += dx;
+  it.y += dy;
+  clampToPage(it);
+  drawOverlay();
+}
+
+function duplicateSelected() {
+  const src = state.items[state.selected];
+  if (!src) return toast("Select an item first", true);
+  const copy = { ...src, x: src.x + 10, y: src.y + 10 };
+  clampToPage(copy);
+  state.selected = state.items.push(copy) - 1;
+  drawOverlay();
+  toast("Duplicated — drag it into place.");
+}
+
+function focusPane() {
+  const panes = state.compare.panes;
+  return panes[state.compare.focus] || panes[0] || null;
+}
+
+function edgePane(first) {
+  const targets = state.compare.sync ? state.compare.panes : [focusPane()].filter(Boolean);
+  let moved = false;
+  targets.forEach((p) => {
+    const next = first ? 1 : p.pageCount;
+    if (next === p.page) return;
+    p.page = next;
+    moved = true;
+  });
+  if (moved) targets.forEach(renderPane);
+}
+
+function nudgeOrScrollEditor(key, step) {
+  // A selected item gets nudged; with nothing selected the arrows scroll.
+  if (state.selected >= 0 && state.items[state.selected]) {
+    if (key === "ArrowLeft") nudgeSelected(-step, 0);
+    else if (key === "ArrowRight") nudgeSelected(step, 0);
+    else if (key === "ArrowUp") nudgeSelected(0, -step);
+    else if (key === "ArrowDown") nudgeSelected(0, step);
+  } else {
+    const wrap = $("canvasWrap");
+    if (key === "ArrowLeft") wrap.scrollBy({ left: -40 });
+    else if (key === "ArrowRight") wrap.scrollBy({ left: 40 });
+    else if (key === "ArrowUp") wrap.scrollBy({ top: -40 });
+    else if (key === "ArrowDown") wrap.scrollBy({ top: 40 });
+  }
+}
 
 document.addEventListener("keydown", (e) => {
-  if (state.selected < 0) return;
-  if (e.key === "Delete" || e.key === "Backspace") {
-    const tag = document.activeElement && document.activeElement.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.key === "Escape") {
+    // Escape leaves the read-only comparison first; in the editor it drops
+    // the selection, then the staged image (see second Escape listener below
+    // for compare handling — kept for backwards-compat ordering).
+    if (state.compare.active) return;
+    if (isTypingTarget()) {
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      return;
+    }
+    if (state.selected >= 0) {
+      state.selected = -1;
+      drawOverlay();
+    } else if (state.image) {
+      clearStagedImage();
+      toast("Staged image cleared.");
+    }
+    return;
+  }
+  if (isTypingTarget()) return;
+  const ctrl = e.ctrlKey || e.metaKey;
+
+  if ((ctrl && e.key.toLowerCase() === "s") || (ctrl && e.key.toLowerCase() === "d")) {
     e.preventDefault();
-    state.items.splice(state.selected, 1);
-    state.selected = -1;
-    drawOverlay();
+    if (state.compare.active) {
+      if (e.key.toLowerCase() === "s") toast("Back to the editor to save", true);
+      return;
+    }
+    if (!state.pdf) return toast("Upload a PDF first");
+    if (e.key.toLowerCase() === "s") saveVersion();
+    else duplicateSelected();
+    return;
+  }
+  if (ctrl && (e.key === "+" || e.key === "=" || e.key === "-" || e.key === "_" || e.key === "0")) {
+    e.preventDefault();
+    if (e.key === "0") return applyZoom(state.compare.active ? focusPane() : "editor", 1.4);
+    return applyZoom(
+      state.compare.active ? focusPane() : "editor",
+      (state.compare.active ? (focusPane() ? focusPane().scale : state.scale) : state.scale) +
+        (e.key === "+" || e.key === "=" ? ZOOM_STEP : -ZOOM_STEP)
+    );
+  }
+  if (ctrl) return; // never hijack other browser/OS shortcuts
+
+  switch (e.key) {
+    case "PageDown":
+      e.preventDefault();
+      if (state.compare.active) stepPane(focusPane(), 1);
+      else stepEditorPage(1);
+      break;
+    case "PageUp":
+      e.preventDefault();
+      if (state.compare.active) stepPane(focusPane(), -1);
+      else stepEditorPage(-1);
+      break;
+    case "Home":
+      e.preventDefault();
+      if (state.compare.active) edgePane(true);
+      else if (state.pdf && state.page !== 1) {
+        state.page = 1;
+        renderPage();
+      }
+      break;
+    case "End":
+      e.preventDefault();
+      if (state.compare.active) edgePane(false);
+      else if (state.pdf && state.page !== state.pageCount) {
+        state.page = state.pageCount;
+        renderPage();
+      }
+      break;
+    case "+":
+    case "=":
+      if (state.compare.active) {
+        const p = focusPane();
+        if (p) applyZoom(p, p.scale + ZOOM_STEP);
+      } else applyZoom("editor", state.scale + ZOOM_STEP);
+      break;
+    case "-":
+    case "_":
+      if (state.compare.active) {
+        const p = focusPane();
+        if (p) applyZoom(p, p.scale - ZOOM_STEP);
+      } else applyZoom("editor", state.scale - ZOOM_STEP);
+      break;
+    case "0":
+      applyZoom(state.compare.active ? focusPane() : "editor", 1.4);
+      break;
+    case "Delete":
+    case "Backspace":
+      if (state.compare.active || state.selected < 0) return;
+      e.preventDefault();
+      state.items.splice(state.selected, 1);
+      state.selected = -1;
+      drawOverlay();
+      break;
+    case "Enter":
+      if (!state.compare.active && state.image) {
+        e.preventDefault();
+        placeCentre();
+      }
+      break;
+    case "ArrowLeft":
+    case "ArrowRight":
+    case "ArrowUp":
+    case "ArrowDown": {
+      const step = e.shiftKey ? 10 : 1;
+      if (state.compare.active) {
+        // Compare panes are viewers only: arrows scroll the focused pane and
+        // the existing syncScroll mirrors the rest while Sync is on.
+        const p = focusPane();
+        if (!p) return;
+        e.preventDefault();
+        if (e.key === "ArrowLeft") p.scroller.scrollBy({ left: -40 });
+        else if (e.key === "ArrowRight") p.scroller.scrollBy({ left: 40 });
+        else if (e.key === "ArrowUp") p.scroller.scrollBy({ top: -40 });
+        else p.scroller.scrollBy({ top: 40 });
+      } else {
+        if (!state.pdf) return;
+        e.preventDefault();
+        nudgeOrScrollEditor(e.key, step);
+      }
+      break;
+    }
   }
 });
 
@@ -543,26 +781,27 @@ $("clearImage").onclick = clearStagedImage;
 
 $("openPlace").onclick = () => $("imageInput").click();
 
-$("placeCentre").onclick = () => {
+function placeCentre() {
   if (!state.pdf) return toast("Upload a PDF first");
   if (!state.image) return toast("Choose an image first", true);
   state.selected = state.items.push(
     newImageAt(state.pageSize.width / 2, state.pageSize.height / 2)
   ) - 1;
   drawOverlay();
-};
+}
+
+$("placeCentre").onclick = placeCentre;
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  // Escape leaves the read-only comparison before it clears a selection.
+  // Escape leaves the read-only comparison; the editor-side Escape handling
+  // (deselect, then clear the staged image) lives in the keybindings listener.
   if (state.compare.active) return exitCompare();
-  state.selected = -1;
-  drawOverlay();
 });
 
 /* ---------- save version ---------- */
 
-$("saveVersion").onclick = async () => {
+async function saveVersion() {
   if (!state.docId) return toast("Upload a PDF first");
   const body = {
     doc_id: state.docId,
@@ -591,7 +830,9 @@ $("saveVersion").onclick = async () => {
     // Keep the pending placements so the user can retry or switch format.
     toast(`Save failed: ${err.message}`, true);
   }
-};
+}
+
+$("saveVersion").onclick = saveVersion;
 
 /* ---------- zoom ---------- */
 
@@ -645,6 +886,21 @@ function renderZoom() {
 document.querySelectorAll("[data-zoom-step]").forEach((btn) => {
   btn.onclick = () => stepZoom(btn, Number(btn.dataset.zoomStep));
 });
+
+/* Ctrl+wheel zooms the working pane (a trackpad pinch arrives as Ctrl+wheel
+   too); a plain wheel scrolls natively. Non-passive so the browser zoom can
+   be suppressed when Ctrl is held. */
+$("canvasWrap").addEventListener(
+  "wheel",
+  (e) => {
+    if (state.compare.active) return;
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (!state.pdf) return;
+    e.preventDefault();
+    applyZoom("editor", state.scale + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+  },
+  { passive: false }
+);
 
 /* ---------- comparison ----------
    A reversible, read-only view. It renders into its own #compareWrap and must
@@ -726,6 +982,56 @@ async function buildPane(layers, label, base) {
     btn.onclick = () => stepPane(pane, parseInt(btn.dataset.d, 10));
   });
   pane.scroller.addEventListener("scroll", () => syncScroll(pane));
+  // Middle-drag pans the pane (plain or with Ctrl — the modifier is ignored).
+  // Kept local to the scroller so it never touches the editor's drag state;
+  // the scroll events it produces still flow through syncScroll while Sync is
+  // on. Ctrl+wheel zooms the focused pane via applyZoom (Sync-aware).
+  let pan = null;
+  pane.scroller.addEventListener("pointerdown", (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    pan = { sx: e.clientX, sy: e.clientY, sl: pane.scroller.scrollLeft, st: pane.scroller.scrollTop };
+    try {
+      pane.scroller.setPointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    pane.scroller.style.cursor = "grabbing";
+  });
+  pane.scroller.addEventListener("pointermove", (e) => {
+    if (!pan) return;
+    pane.scroller.scrollLeft = pan.sl - (e.clientX - pan.sx);
+    pane.scroller.scrollTop = pan.st - (e.clientY - pan.sy);
+  });
+  const endPan = (e) => {
+    if (!pan) return;
+    try {
+      if (e && pane.scroller.hasPointerCapture(e.pointerId))
+        pane.scroller.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    pane.scroller.style.cursor = "";
+    pan = null;
+  };
+  pane.scroller.addEventListener("pointerup", endPan);
+  pane.scroller.addEventListener("pointercancel", endPan);
+  pane.scroller.addEventListener("mousedown", (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
+  pane.scroller.addEventListener("auxclick", (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
+  pane.scroller.addEventListener(
+    "wheel",
+    (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      state.compare.focus = Math.max(0, state.compare.panes.indexOf(pane));
+      applyZoom(pane, pane.scale + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+    },
+    { passive: false }
+  );
   el.querySelector("[data-note]").textContent = paneNote(pane, base);
   $("compareWrap").appendChild(el);
   return pane;
@@ -734,6 +1040,7 @@ async function buildPane(layers, label, base) {
 /* One turner moves every pane while Sync is on; each clamps to its own page
    count, so revisions of different lengths stay side by side. */
 function stepPane(pane, delta) {
+  if (!pane) return;
   state.compare.focus = Math.max(0, state.compare.panes.indexOf(pane));
   const targets = state.compare.sync ? state.compare.panes : [pane];
   let moved = false;
