@@ -184,15 +184,53 @@ function itemAt(px, py) {
   return -1;
 }
 
+// Resize handles: the selected box gets all four corners plus edge
+// midpoints, so it can be reshaped from any side — not just dragged
+// from the bottom-right corner.
+const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+
+const HANDLE_CURSORS = {
+  nw: "nwse-resize",
+  se: "nwse-resize",
+  ne: "nesw-resize",
+  sw: "nesw-resize",
+  e: "ew-resize",
+  w: "ew-resize",
+  n: "ns-resize",
+  s: "ns-resize",
+};
+
+function handlePoints(it) {
+  const x0 = it.x;
+  const y0 = it.y;
+  const x1 = it.x + it.w;
+  const y1 = it.y + it.h;
+  const mx = (x0 + x1) / 2;
+  const my = (y0 + y1) / 2;
+  return {
+    nw: [x0, y0],
+    n: [mx, y0],
+    ne: [x1, y0],
+    e: [x1, my],
+    se: [x1, y1],
+    s: [mx, y1],
+    sw: [x0, y1],
+    w: [x0, my],
+  };
+}
+
 function handleAt(px, py) {
-  if (state.selected < 0) return -1;
+  if (state.selected < 0) return null;
   const it = state.items[state.selected];
-  if (!it || it.page !== pageIndex()) return -1;
+  if (!it || it.page !== pageIndex()) return null;
   const pad = HANDLE / state.scale;
-  const hx = it.x + it.w;
-  const hy = it.y + it.h;
-  if (Math.abs(px - hx) <= pad && Math.abs(py - hy) <= pad) return state.selected;
-  return -1;
+  const pts = handlePoints(it);
+  for (const h of HANDLES) {
+    const [hx, hy] = pts[h];
+    if (Math.abs(px - hx) <= pad && Math.abs(py - hy) <= pad)
+      return { idx: state.selected, handle: h };
+  }
+  return null;
 }
 
 function screenToPage(evt) {
@@ -270,8 +308,12 @@ function drawOverlay() {
       octx.fillStyle = "#fff";
       octx.strokeStyle = i.kind === "image" ? "#059669" : "#4f46e5";
       octx.lineWidth = 2;
-      octx.fillRect(x + w - HANDLE / 2, y + h - HANDLE / 2, HANDLE, HANDLE);
-      octx.strokeRect(x + w - HANDLE / 2, y + h - HANDLE / 2, HANDLE, HANDLE);
+      Object.values(handlePoints(i)).forEach(([hx, hy]) => {
+        const px = hx * state.scale;
+        const py = hy * state.scale;
+        octx.fillRect(px - HANDLE / 2, py - HANDLE / 2, HANDLE, HANDLE);
+        octx.strokeRect(px - HANDLE / 2, py - HANDLE / 2, HANDLE, HANDLE);
+      });
     }
   });
   renderItemList();
@@ -312,10 +354,21 @@ overlay.onpointerdown = (e) => {
   if (e.button === 1) return startPan(e, $("canvasWrap"));
   if (e.button !== 0) return;
   const { x, y } = screenToPage(e);
-  const resizing = handleAt(x, y);
-  if (resizing >= 0) {
-    const it = state.items[resizing];
-    drag = { mode: "resize", idx: resizing, ratio: it.h / it.w, w: it.w, h: it.h };
+  const grip = handleAt(x, y);
+  if (grip) {
+    const it = state.items[grip.idx];
+    // Snapshot the box: each handle reshapes relative to the opposite
+    // corner/edge captured here.
+    drag = {
+      mode: "resize",
+      idx: grip.idx,
+      handle: grip.handle,
+      ratio: it.h / it.w,
+      x0: it.x,
+      y0: it.y,
+      x1: it.x + it.w,
+      y1: it.y + it.h,
+    };
     overlay.setPointerCapture(e.pointerId);
     return;
   }
@@ -331,14 +384,14 @@ overlay.onpointerdown = (e) => {
   }
   if (state.image) {
     state.selected = state.items.push(newImageAt(x, y)) - 1;
-    toast("Placed — drag to move, drag the corner to resize.");
+    toast("Placed — drag to move, drag any corner or edge to resize.");
   } else if (state.text) {
     syncStagedTextFromInputs();
     if (!state.text.text.trim()) {
       toast("Type some text first", true);
     } else {
       state.selected = state.items.push(newTextAt(x, y)) - 1;
-      toast("Placed — drag to move, drag the corner to resize.");
+      toast("Placed — drag to move, drag any corner or edge to resize.");
     }
   } else {
     state.selected = -1;
@@ -354,8 +407,12 @@ overlay.onpointermove = (e) => {
   }
   const { x, y } = screenToPage(e);
   if (!drag) {
-    overlay.style.cursor =
-      handleAt(x, y) >= 0 ? "nwse-resize" : state.image || state.text ? "copy" : "default";
+    const grip = handleAt(x, y);
+    overlay.style.cursor = grip
+      ? HANDLE_CURSORS[grip.handle]
+      : state.image || state.text
+        ? "copy"
+        : "default";
     return;
   }
   const it = state.items[drag.idx];
@@ -363,11 +420,42 @@ overlay.onpointermove = (e) => {
     drag.moved = true;
     it.x = x - drag.dx;
     it.y = y - drag.dy;
+  } else if (it.kind === "text") {
+    // Text reshapes freely: every side moves independently.
+    let nx0 = drag.x0;
+    let ny0 = drag.y0;
+    let nx1 = drag.x1;
+    let ny1 = drag.y1;
+    if (drag.handle.includes("e")) nx1 = Math.max(drag.x0 + MIN_SIZE, x);
+    if (drag.handle.includes("w")) nx0 = Math.min(x, drag.x1 - MIN_SIZE);
+    if (drag.handle.includes("s")) ny1 = Math.max(drag.y0 + MIN_SIZE, y);
+    if (drag.handle.includes("n")) ny0 = Math.min(y, drag.y1 - MIN_SIZE);
+    it.x = nx0;
+    it.y = ny0;
+    it.w = nx1 - nx0;
+    it.h = ny1 - ny0;
   } else {
-    // Preserve the aspect ratio so resizing never distorts the image.
-    const w = Math.max(MIN_SIZE, x - it.x);
-    it.w = w;
-    it.h = w * drag.ratio;
+    // Images keep their aspect ratio so resizing never distorts them: the
+    // box grows from the grabbed side, anchored at the opposite edge.
+    const r = drag.ratio;
+    const heightDriven = drag.handle === "n" || drag.handle === "s";
+    if (heightDriven) {
+      const h = Math.max(MIN_SIZE, drag.handle === "s" ? y - drag.y0 : drag.y1 - y);
+      const w = h / r;
+      it.x = drag.x0;
+      it.w = w;
+      it.y = drag.handle === "s" ? drag.y0 : drag.y1 - h;
+      it.h = h;
+    } else {
+      const west = drag.handle.includes("w");
+      const north = drag.handle.includes("n");
+      const w = Math.max(MIN_SIZE, west ? drag.x1 - x : x - drag.x0);
+      const h = w * r;
+      it.x = west ? drag.x1 - w : drag.x0;
+      it.w = w;
+      it.y = north ? drag.y1 - h : drag.y0;
+      it.h = h;
+    }
   }
   clampToPage(it);
   drawOverlay();
@@ -842,7 +930,7 @@ $("textSize").oninput = () => {
   if (editing) {
     editing.size = size;
     // Grow the box so a bigger font is not born clipped; the user can still
-    // resize the corner afterwards.
+    // resize a corner afterwards.
     editing.h = Math.max(editing.h, size * 1.5);
     clampToPage(editing);
   }
