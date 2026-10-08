@@ -67,13 +67,13 @@
   <section class="flex-1 min-w-0 flex flex-col min-h-0 bg-white rounded-lg shadow overflow-hidden">
     <div id="viewerBar" class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200">
       <div class="flex items-center gap-2">
-        <button id="prevPage" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&larr;</button>
+        <button id="prevPage" title="Previous page (PageUp)" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&larr;</button>
         <span class="text-sm text-slate-600">Page <span id="pageNum">1</span> / <span id="pageCount">1</span></span>
-        <button id="nextPage" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&rarr;</button>
+        <button id="nextPage" title="Next page (PageDown)" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&rarr;</button>
         <div class="flex items-center gap-0.5 ml-1 text-xs border rounded text-slate-600 bg-white">
-          <button data-zoom-step="-1" type="button" title="Zoom out" class="px-1.5 py-1 hover:bg-slate-100 rounded">&minus;</button>
-          <span data-zoom-val class="tabular-nums w-11 text-center">140%</span>
-          <button data-zoom-step="1" type="button" title="Zoom in" class="px-1.5 py-1 hover:bg-slate-100 rounded">+</button>
+          <button data-zoom-step="-1" type="button" title="Zoom out (Ctrl+-)" class="px-1.5 py-1 hover:bg-slate-100 rounded">&minus;</button>
+          <span data-zoom-val title="Reset zoom (Ctrl+0)" class="tabular-nums w-11 text-center">140%</span>
+          <button data-zoom-step="1" type="button" title="Zoom in (Ctrl++)" class="px-1.5 py-1 hover:bg-slate-100 rounded">+</button>
         </div>
       </div>
       <div class="flex flex-wrap items-center gap-2 justify-end">
@@ -85,13 +85,13 @@
           <input id="imgWidth" type="number" value="25" min="1" max="100"
                  class="w-14 border rounded px-1 py-0.5 text-xs" />
           <span class="text-xs text-slate-400">% of page</span>
-          <button id="placeCentre" class="text-xs bg-emerald-600 text-white rounded px-2 py-1 hover:bg-emerald-500">Place in centre</button>
-          <button id="clearImage" class="text-xs border rounded px-2 py-1 hover:bg-slate-100">Clear</button>
+          <button id="placeCentre" title="Place in centre (Enter)" class="text-xs bg-emerald-600 text-white rounded px-2 py-1 hover:bg-emerald-500">Place in centre</button>
+          <button id="clearImage" title="Clear staged image (Esc)" class="text-xs border rounded px-2 py-1 hover:bg-slate-100">Clear</button>
         </div>
         <button id="addText" class="text-sm bg-slate-800 text-white rounded px-3 py-1 hover:bg-slate-700">+ Text box</button>
         <button id="openPlace" class="text-sm bg-emerald-600 text-white rounded px-3 py-1 hover:bg-emerald-500">+ Image</button>
         <input id="imageInput" type="file" accept="image/*" class="hidden" />
-        <button id="saveVersion" class="text-sm bg-indigo-600 text-white rounded px-3 py-1 hover:bg-indigo-500">Save New Version</button>
+        <button id="saveVersion" title="Save new version (Ctrl+S)" class="text-sm bg-indigo-600 text-white rounded px-3 py-1 hover:bg-indigo-500">Save New Version</button>
       </div>
     </div>
     <!-- Comparison is a separate, reversible view: it never mutates
@@ -108,16 +108,16 @@
           <span id="opacityVal" class="tabular-nums w-8 text-slate-400">50%</span>
         </label>
         <div class="flex items-center gap-0.5 text-xs border rounded text-slate-600 bg-white">
-          <button data-zoom-step="-1" type="button" title="Zoom out" class="px-1.5 py-1 hover:bg-slate-100 rounded">&minus;</button>
-          <span data-zoom-val class="tabular-nums w-11 text-center">140%</span>
-          <button data-zoom-step="1" type="button" title="Zoom in" class="px-1.5 py-1 hover:bg-slate-100 rounded">+</button>
+          <button data-zoom-step="-1" type="button" title="Zoom out (Ctrl+-)" class="px-1.5 py-1 hover:bg-slate-100 rounded">&minus;</button>
+          <span data-zoom-val title="Reset zoom (Ctrl+0)" class="tabular-nums w-11 text-center">140%</span>
+          <button data-zoom-step="1" type="button" title="Zoom in (Ctrl++)" class="px-1.5 py-1 hover:bg-slate-100 rounded">+</button>
         </div>
         <label class="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap cursor-pointer select-none"
                title="Link paging, scrolling and zoom across both panes">
           <input id="compareSync" type="checkbox" checked class="accent-indigo-600" />
           Sync
         </label>
-        <button id="exitCompare" type="button" class="text-sm border rounded px-3 py-1 hover:bg-slate-100">Back to editor</button>
+        <button id="exitCompare" type="button" title="Back to editor (Esc)" class="text-sm border rounded px-3 py-1 hover:bg-slate-100">Back to editor</button>
       </div>
     </div>
 
@@ -132,7 +132,7 @@
         <input id="changeSummary" type="text" placeholder="Change summary for this revision"
                class="flex-1 min-w-0 text-sm border rounded px-2 py-1" />
         <span class="hidden sm:block whitespace-nowrap text-[11px] text-slate-400">
-          Corner resizes &middot; <span class="font-mono">Del</span> removes
+          Corner resizes &middot; <span class="font-mono">Del</span> removes &middot; <span class="font-mono">PgUp/PgDn</span> pages &middot; middle-drag pans &middot; <span class="font-mono">Ctrl+scroll</span> zooms &middot; arrows nudge &middot; <span class="font-mono">Ctrl+S</span> saves &middot; <span class="font-mono">Esc</span> clears
         </span>
       </div>
     </div>
