@@ -23,23 +23,29 @@
 
 <main class="relative flex-1 min-h-0 flex gap-4 p-4 overflow-hidden">
 
-  <!-- Floating sidebar toggle: overlays the top-left corner of main, above
-       both the viewer and the sidebar drawer. -->
-  <button id="sidebarToggle" type="button" title="Toggle sidebar" aria-label="Toggle sidebar" aria-expanded="false"
-          class="absolute left-4 top-4 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-lg text-white shadow-lg hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">&#9776;</button>
-
-  <!-- Document + version sidebar: hidden behind the floating toggle.
-       Inline column on lg+, floating drawer below that. -->
-  <aside id="sidebar"
-         class="hidden w-64 lg:w-72 flex-none flex-col gap-4 min-h-0 overflow-y-auto
-                max-lg:absolute max-lg:left-0 max-lg:top-0 max-lg:bottom-0 max-lg:z-40
-                max-lg:w-72 max-lg:bg-slate-100 max-lg:rounded-lg max-lg:shadow-xl max-lg:p-3">
-    <section class="flex-none bg-white rounded-lg shadow p-3">
+  <!-- Separate pull-out sidebar: its own rail on the left edge of main with
+       the hamburger in its own head row — nothing lives in the header.
+       Inline (pushing) column on lg+, floating drawer (rail peeking) below. -->
+  <div id="sidePanel"
+       class="sidebar-closed flex-none flex flex-col min-h-0 overflow-hidden
+              bg-white rounded-lg shadow
+              max-lg:absolute max-lg:left-0 max-lg:top-0 max-lg:bottom-0 max-lg:z-40
+              max-lg:rounded-l-none max-lg:rounded-r-lg max-lg:shadow-xl">
+    <div class="flex flex-none items-center gap-2 p-2 border-b border-slate-200">
+      <button id="sidebarToggle" type="button" title="Show documents and revisions"
+              aria-label="Show documents and revisions" aria-expanded="false" aria-controls="sidebar"
+              class="flex-none flex h-9 w-9 items-center justify-center rounded-md text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <span class="tab-glyph" aria-hidden="true"><i></i><i></i><i></i></span>
+      </button>
+      <span id="sideTitle" class="text-sm font-semibold text-slate-700 truncate select-none">Library</span>
+    </div>
+    <aside id="sidebar" class="flex flex-1 flex-col gap-3 min-h-0 overflow-y-auto overflow-x-hidden p-3 bg-slate-100/60">
+    <section class="flex-none bg-white rounded-lg border border-slate-200 p-3">
       <h2 class="text-sm font-semibold uppercase text-slate-500 mb-2">Documents</h2>
       <ul id="docList" class="space-y-1 text-sm"></ul>
     </section>
 
-    <section class="flex-1 min-h-[10rem] bg-white rounded-lg shadow p-3">
+    <section class="flex-1 min-h-[10rem] bg-white rounded-lg border border-slate-200 p-3">
       <h2 class="text-sm font-semibold uppercase text-slate-500 mb-2">Revisions</h2>
       <ul id="versionList" class="space-y-1 text-sm"></ul>
 
@@ -54,11 +60,12 @@
         <button id="compareOverlay" class="mt-1 w-full text-xs bg-slate-700 text-white rounded py-1 hover:bg-slate-600">Overlay (opacity)</button>
       </div>
     </section>
-  </aside>
+    </aside>
+  </div>
 
   <!-- Viewer -->
   <section class="flex-1 min-w-0 flex flex-col min-h-0 bg-white rounded-lg shadow overflow-hidden">
-    <div id="viewerBar" class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200 pl-12">
+    <div id="viewerBar" class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200">
       <div class="flex items-center gap-2">
         <button id="prevPage" class="px-2 py-1 text-sm border rounded hover:bg-slate-100">&larr;</button>
         <span class="text-sm text-slate-600">Page <span id="pageNum">1</span> / <span id="pageCount">1</span></span>
@@ -89,7 +96,7 @@
     </div>
     <!-- Comparison is a separate, reversible view: it never mutates
          #canvasWrap, so "Back to editor" restores the working pane untouched. -->
-    <div id="compareBar" class="hidden flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200 pl-12">
+    <div id="compareBar" class="hidden flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200">
       <div class="flex items-center gap-2 min-w-0">
         <span id="compareMode" class="text-sm font-semibold text-slate-700 truncate">Side by side</span>
         <span class="hidden sm:block text-xs text-slate-400 whitespace-nowrap">older revision first</span>

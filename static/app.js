@@ -368,20 +368,24 @@ function renderItemList() {
 
 const desktopMQ = window.matchMedia("(min-width: 1024px)");
 
-const sidebarOpen = () => !$("sidebar").classList.contains("hidden");
+const sidebarOpen = () => !$("sidePanel").classList.contains("sidebar-closed");
 
 function setSidebar(open) {
-  const sb = $("sidebar");
-  sb.classList.toggle("hidden", !open);
-  sb.classList.toggle("flex", open);
-  // The toggle floats over main's top-left corner: clear room for it — below
-  // the sidebar content when open, in the viewer toolbar when closed.
-  sb.classList.toggle("pt-14", open);
-  $("viewerBar").classList.toggle("pl-12", !open);
-  $("compareBar").classList.toggle("pl-12", !open);
-  $("sidebarToggle").setAttribute("aria-expanded", String(open));
-  // Toggling changes the viewer's width, so re-anchor whichever view is live.
+  const sb = $("sidePanel");
+  // CSS owns the pull animation (width push on lg+, translateX drawer below
+  // lg), so toggling one class animates both directions.
+  sb.classList.toggle("sidebar-closed", !open);
+  const tab = $("sidebarToggle");
+  // aria-expanded also drives the hamburger-to-cross morph (see styles.css).
+  tab.setAttribute("aria-expanded", String(open));
+  const label = open ? "Hide documents and revisions" : "Show documents and revisions";
+  tab.setAttribute("aria-label", label);
+  tab.title = label;
+  // Toggling changes (or, mid-transition, is changing) the viewer's width, so
+  // re-anchor now and once more after the slide settles or the overlay drifts.
   requestAnimationFrame(repaint);
+  clearTimeout(setSidebar._t);
+  setSidebar._t = setTimeout(repaint, 340);
 }
 
 /* ---------- document lifecycle ---------- */
@@ -883,7 +887,7 @@ $("sidebarToggle").onclick = () => setSidebar(!sidebarOpen());
 // tap so it can never strand the page.
 document.addEventListener("click", (e) => {
   if (desktopMQ.matches || !sidebarOpen()) return;
-  if ($("sidebar").contains(e.target) || $("sidebarToggle").contains(e.target)) return;
+  if ($("sidePanel").contains(e.target)) return;
   setSidebar(false);
 });
 

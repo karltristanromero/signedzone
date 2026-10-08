@@ -1,2 +1,96 @@
 body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 .item-chip { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+
+/* ---------- Notion-style separate sidebar ----------
+   #sidePanel is its own rail on the left edge of <main>: the hamburger lives
+   in its head row, nothing occupies the header. Clicking pulls the panel open
+   horizontally — pushing the viewer on lg+ (width transition in flex flow),
+   floating over it as a drawer (rail still peeking) below lg. Both directions
+   animate so open *and* close look like a pull, not a blink. */
+#sidePanel {
+  flex-shrink: 0;
+  transform-origin: left center;
+}
+
+/* Desktop (lg+): the panel is an inline flex item, so animating its width
+   pushes the viewer sideways exactly like Notion. Collapsed it rests as a
+   slim icon rail (hamburger still visible); open it is the full library. */
+@media (min-width: 1024px) {
+  #sidePanel {
+    width: 18rem;
+    transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #sidePanel.sidebar-closed {
+    width: 3.5rem;
+  }
+  /* Clip the library while the rail collapses: cards slide out from under the
+     head row instead of squishing. Fade the content slightly ahead of the
+     width so text never wraps mid-pull. */
+  #sidePanel #sidebar,
+  #sidePanel #sideTitle {
+    transition: opacity 0.18s ease, visibility 0.3s;
+  }
+  #sidePanel.sidebar-closed #sidebar,
+  #sidePanel.sidebar-closed #sideTitle {
+    opacity: 0;
+    visibility: hidden;
+  }
+  #sidePanel #sidebar > section {
+    min-width: 14rem;
+  }
+}
+
+/* Below lg: the panel is an absolute drawer over the viewer. Closed it parks
+   off-screen with just the 3.5rem rail peeking out, so the hamburger stays
+   reachable; open it covers the viewer edge. */
+@media (max-width: 1023.98px) {
+  #sidePanel {
+    width: 18rem;
+    transform: translateX(0);
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #sidePanel.sidebar-closed {
+    transform: translateX(calc(-100% + 3.5rem));
+  }
+  #sidePanel #sidebar,
+  #sidePanel #sideTitle {
+    transition: opacity 0.18s ease, visibility 0.3s;
+  }
+  #sidePanel.sidebar-closed #sidebar,
+  #sidePanel.sidebar-closed #sideTitle {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* ---------- hamburger (sidebar toggle) ----------
+   Three bars in the panel's own head row; opening morphs them into a cross.
+   The button never leaves the rail — the *panel* is what gets pulled. */
+#sidebarToggle .tab-glyph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 18px;
+  height: 18px;
+}
+#sidebarToggle .tab-glyph i {
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  transition: transform 0.25s ease, opacity 0.15s ease;
+}
+/* Three bars fold into a cross when open. */
+#sidebarToggle[aria-expanded="true"] .tab-glyph i:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+#sidebarToggle[aria-expanded="true"] .tab-glyph i:nth-child(2) { opacity: 0; }
+#sidebarToggle[aria-expanded="true"] .tab-glyph i:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  #sidePanel,
+  #sidePanel #sidebar,
+  #sidePanel #sideTitle,
+  #sidebarToggle .tab-glyph i { transition: none; }
+}

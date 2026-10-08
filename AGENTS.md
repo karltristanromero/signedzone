@@ -83,10 +83,20 @@ points, origin top-left**, from `getViewport({scale:1})`; `page` is **0-based**
   viewport, it doesn't scroll with the canvas, and hit-testing drifts by the
   scroll offset). Never reintroduce `calc(100vh-Npx)` header arithmetic.
 - There is no left/right pane pair any more: `#sidebar` (documents + revisions)
-  hangs off the floating toggle (`#sidebarToggle`, absolute top-left of `main`) via `setSidebar()`, which
+  hangs off the bookmark tab (`#sidebarToggle`, absolute top-left of `main`) via
+  `setSidebar()`, which
   shows it as an inline column on `lg+` and as an absolute drawer over the viewer
   below that; because toggling moves the canvas, `setSidebar()` re-runs
-  `renderPage()` on the next frame or the overlay detaches. The image staging
+  `renderPage()` on the next frame or the overlay detaches. The tab is a **half-disc**
+  (`h-7 w-14`, flat top, `rounded-b-full` in `styles.css`) whose `aria-expanded`
+  drives an in-plane `rotate(180deg)` turn — in-plane, never `rotateX`/`translate`,
+  because the turn must keep the disc inside its own box or `main`'s
+  `overflow-hidden` clips the bulge — and `setSidebar()` unfurls `#sidebar` with a
+  WAAPI `animate()` from `transform-origin: top`. Closed, the tab overlaps the
+  viewer toolbar, so `#viewerBar`/`#compareBar` carry `pl-16` (64px = the tab's
+  56px width + an 8px gap at `left-4`) and `setSidebar()` toggles that class —
+  don't fall back to `pl-12`, and don't shrink the tab without re-deriving both.
+  The image staging
   controls live in the toolbar's `#stagedBar` (visible only while an image is
   staged) and the placed-item chips in `#itemList` under the canvas — both hide
   themselves when empty.
