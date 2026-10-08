@@ -383,7 +383,10 @@ overlay.onpointerdown = (e) => {
     return;
   }
   if (state.image) {
+    // Single-use staging: placing consumes it, so a second click can never
+    // silently stamp a duplicate — stage again for another copy.
     state.selected = state.items.push(newImageAt(x, y)) - 1;
+    clearStagedImage();
     toast("Placed — drag to move, drag any corner or edge to resize.");
   } else if (state.text) {
     syncStagedTextFromInputs();
@@ -391,6 +394,8 @@ overlay.onpointerdown = (e) => {
       toast("Type some text first", true);
     } else {
       state.selected = state.items.push(newTextAt(x, y)) - 1;
+      clearStagedText();
+      refreshTextBar();
       toast("Placed — drag to move, drag any corner or edge to resize.");
     }
   } else {
@@ -585,6 +590,7 @@ document.addEventListener("keydown", (e) => {
     }
     if (state.selected >= 0) {
       state.selected = -1;
+      refreshTextBar();
       drawOverlay();
     } else if (state.image) {
       clearStagedImage();
@@ -670,6 +676,7 @@ document.addEventListener("keydown", (e) => {
       e.preventDefault();
       state.items.splice(state.selected, 1);
       state.selected = -1;
+      refreshTextBar();
       drawOverlay();
       break;
     case "Enter":
@@ -733,6 +740,7 @@ function renderItemList() {
       e.stopPropagation();
       state.items.splice(idx, 1);
       if (state.selected === idx) state.selected = -1;
+      refreshTextBar();
       drawOverlay();
     };
     li.appendChild(del);
@@ -770,6 +778,7 @@ async function openDocument(docId) {
   state.docId = docId;
   state.items = [];
   state.selected = -1;
+  refreshTextBar();
   // A comparison belongs to the document it was opened from.
   if (state.compare.active) await exitCompare(true);
   // Below lg the sidebar floats over the viewer — put it away once used.
@@ -787,6 +796,7 @@ async function openVersion(version) {
   state.version = version;
   state.items = [];
   state.selected = -1;
+  refreshTextBar();
   await loadPdf(version);
   toast(`Viewing v${version}`);
 }
@@ -875,18 +885,15 @@ function selectedTextItem() {
   return it && it.kind === "text" ? it : null;
 }
 
-/* Selecting a placed text box opens it in the toolbar for editing: the bar
-   stays in stamp mode (state.text seeded from the item), so typing fixes that
-   box and the next click places another copy with the same wording. */
+/* Selecting a placed text box opens it in the toolbar for editing, without
+   staging anything: typing fixes that box, and clicking the page only
+   deselects it — it never stamps a copy. A copy is made only through an
+   explicit action (+ Text box / Place in centre / Ctrl+D). */
 function refreshTextBar() {
   const editing = selectedTextItem();
-  if (editing && !state.text) {
-    state.text = { text: editing.text || "", size: editing.size || 12 };
-    overlay.style.cursor = "copy";
-  }
-  const show = !!state.text;
+  const show = !!state.text || !!editing;
   setTextBar(show);
-  if (state.text) {
+  if (show) {
     const src = editing || state.text;
     if (document.activeElement !== $("textContent")) $("textContent").value = src.text || "";
     if (document.activeElement !== $("textSize")) $("textSize").value = src.size || 12;
@@ -902,19 +909,20 @@ $("addText").onclick = () => {
   }
   // Staging one kind clears the other so a page click is never ambiguous.
   if (state.image) clearStagedImage();
-  const editing = selectedTextItem();
-  state.text = editing
-    ? { text: editing.text || "", size: editing.size || 12 }
-    : { text: $("textContent").value || "", size: stagedTextSize() };
+  // A fresh box starts unselected with empty wording, never inheriting the
+  // currently selected box — each placement is staged deliberately.
+  state.selected = -1;
+  state.text = { text: "", size: stagedTextSize() };
   setTextBar(true);
   refreshTextBar();
   overlay.style.cursor = "copy";
+  drawOverlay();
   $("textContent").focus();
   toast("Text staged — click anywhere on the page to place it.");
 };
 
-/* Toolbar edits apply live: to the selected box when one is selected (which
-   also re-seeds the stamp copy), otherwise to the staged text alone. */
+/* Toolbar edits apply live: to the selected box when one is selected,
+   otherwise to the staged text alone. */
 $("textContent").oninput = () => {
   const value = $("textContent").value;
   if (state.text) state.text.text = value;
@@ -948,13 +956,33 @@ $("clearText").onclick = () => {
 
 function placeTextCentre() {
   if (!state.pdf) return toast("Upload a PDF first");
-  if (!state.text) return toast("Stage a text box first", true);
-  syncStagedTextFromInputs();
-  if (!state.text.text.trim()) return toast("Type some text first", true);
-  state.selected = state.items.push(
-    newTextAt(state.pageSize.width / 2, state.pageSize.height / 2)
-  ) - 1;
-  drawOverlay();
+  if (state.text) {
+    syncStagedTextFromInputs();
+    if (!state.text.text.trim()) return toast("Type some text first", true);
+    state.selected = state.items.push(
+      newTextAt(state.pageSize.width / 2, state.pageSize.height / 2)
+    ) - 1;
+    clearStagedText();
+    refreshTextBar();
+    drawOverlay();
+    return;
+  }
+  // No staging: explicitly copy the selected box into the page centre.
+  const editing = selectedTextItem();
+  if (editing) {
+    const copy = {
+      ...editing,
+      page: pageIndex(),
+      x: state.pageSize.width / 2 - editing.w / 2,
+      y: state.pageSize.height / 2 - editing.h / 2,
+    };
+    clampToPage(copy);
+    state.selected = state.items.push(copy) - 1;
+    refreshTextBar();
+    drawOverlay();
+    return;
+  }
+  return toast("Stage a text box first", true);
 }
 
 $("placeTextCentre").onclick = placeTextCentre;
@@ -1051,6 +1079,7 @@ function placeCentre() {
   state.selected = state.items.push(
     newImageAt(state.pageSize.width / 2, state.pageSize.height / 2)
   ) - 1;
+  clearStagedImage();
   drawOverlay();
 }
 
