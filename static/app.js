@@ -241,8 +241,30 @@ function drawOverlay() {
       octx.fillStyle = "rgba(79,70,229,0.15)";
       octx.fillRect(x, y, w, h);
       octx.fillStyle = "#4f46e5";
-      octx.font = "12px sans-serif";
-      octx.fillText(i.text.slice(0, 40), x + 4, y + 14);
+      // Render at the item's real point size so the Size control visibly
+      // changes placed boxes; wrap inside the box instead of overflowing.
+      const fs = Math.max(6, (i.size || 12) * state.scale);
+      octx.font = `${fs}px sans-serif`;
+      octx.textBaseline = "top";
+      const pad = 4 * state.scale;
+      const lineH = fs * 1.25;
+      const maxLines = Math.max(1, Math.floor((h - pad) / lineH));
+      const words = String(i.text).split(/\s+/).filter(Boolean);
+      const lines = [];
+      let cur = "";
+      words.forEach((word) => {
+        const trial = cur ? `${cur} ${word}` : word;
+        if (octx.measureText(trial).width <= w - pad * 2 || !cur) cur = trial;
+        else {
+          lines.push(cur);
+          cur = word;
+        }
+      });
+      if (cur) lines.push(cur);
+      lines.slice(0, maxLines).forEach((ln, li) => {
+        octx.fillText(ln, x + pad, y + pad / 2 + li * lineH, w - pad * 2);
+      });
+      octx.textBaseline = "alphabetic";
     }
     if (selected) {
       octx.fillStyle = "#fff";
@@ -303,6 +325,7 @@ overlay.onpointerdown = (e) => {
     const it = state.items[hit];
     drag = { mode: "move", idx: hit, dx: x - it.x, dy: y - it.y, moved: false };
     overlay.setPointerCapture(e.pointerId);
+    refreshTextBar();
     drawOverlay();
     return;
   }
@@ -369,6 +392,18 @@ function endDrag(e) {
 
 overlay.onpointerup = endDrag;
 overlay.onpointercancel = endDrag;
+// Double-clicking a placed text box jumps straight into editing it.
+overlay.ondblclick = (e) => {
+  if (!state.pdf || state.compare.active) return;
+  const { x, y } = screenToPage(e);
+  const hit = itemAt(x, y);
+  if (hit < 0 || state.items[hit].kind !== "text") return;
+  state.selected = hit;
+  refreshTextBar();
+  drawOverlay();
+  $("textContent").focus();
+  $("textContent").select();
+};
 // Some browsers fire auxclick after a middle press; swallow it so it never
 // triggers item placement or text selection. The mousedown guard kills the
 // browser's middle-click autoscroll (pointerdown-preventDefault alone does
@@ -412,6 +447,7 @@ function duplicateSelected() {
   const copy = { ...src, x: src.x + 10, y: src.y + 10 };
   clampToPage(copy);
   state.selected = state.items.push(copy) - 1;
+  refreshTextBar();
   drawOverlay();
   toast("Duplicated — drag it into place.");
 }
@@ -597,6 +633,7 @@ function renderItemList() {
     li.innerHTML = `<span class="truncate max-w-[9rem]">${label}</span>`;
     li.onclick = () => {
       state.selected = idx;
+      refreshTextBar();
       if (it.page !== pageIndex()) state.page = it.page + 1;
       renderPage().then(drawOverlay);
     };
@@ -737,6 +774,38 @@ function newTextAt(px, py) {
   });
 }
 
+function updateTextPreview() {
+  // The Aa chip mirrors the Size box so the control visibly changes the
+  // staged text even before it is placed on the page.
+  const el = $("textPreview");
+  if (!el) return;
+  el.style.fontSize = `${Math.min(24, Math.max(8, stagedTextSize()))}px`;
+}
+
+function selectedTextItem() {
+  const it = state.items[state.selected];
+  return it && it.kind === "text" ? it : null;
+}
+
+/* Selecting a placed text box opens it in the toolbar for editing: the bar
+   stays in stamp mode (state.text seeded from the item), so typing fixes that
+   box and the next click places another copy with the same wording. */
+function refreshTextBar() {
+  const editing = selectedTextItem();
+  if (editing && !state.text) {
+    state.text = { text: editing.text || "", size: editing.size || 12 };
+    overlay.style.cursor = "copy";
+  }
+  const show = !!state.text;
+  setTextBar(show);
+  if (state.text) {
+    const src = editing || state.text;
+    if (document.activeElement !== $("textContent")) $("textContent").value = src.text || "";
+    if (document.activeElement !== $("textSize")) $("textSize").value = src.size || 12;
+  }
+  updateTextPreview();
+}
+
 $("addText").onclick = () => {
   if (!state.pdf) return toast("Upload a PDF first");
   if (state.text) {
@@ -745,18 +814,47 @@ $("addText").onclick = () => {
   }
   // Staging one kind clears the other so a page click is never ambiguous.
   if (state.image) clearStagedImage();
-  state.text = { text: $("textContent").value || "", size: stagedTextSize() };
+  const editing = selectedTextItem();
+  state.text = editing
+    ? { text: editing.text || "", size: editing.size || 12 }
+    : { text: $("textContent").value || "", size: stagedTextSize() };
   setTextBar(true);
+  refreshTextBar();
   overlay.style.cursor = "copy";
   $("textContent").focus();
   toast("Text staged — click anywhere on the page to place it.");
 };
 
-$("textContent").oninput = syncStagedTextFromInputs;
-$("textSize").oninput = syncStagedTextFromInputs;
+/* Toolbar edits apply live: to the selected box when one is selected (which
+   also re-seeds the stamp copy), otherwise to the staged text alone. */
+$("textContent").oninput = () => {
+  const value = $("textContent").value;
+  if (state.text) state.text.text = value;
+  const editing = selectedTextItem();
+  if (editing) editing.text = value;
+  updateTextPreview();
+  drawOverlay();
+};
+$("textSize").oninput = () => {
+  const size = stagedTextSize();
+  if (state.text) state.text.size = size;
+  const editing = selectedTextItem();
+  if (editing) {
+    editing.size = size;
+    // Grow the box so a bigger font is not born clipped; the user can still
+    // resize the corner afterwards.
+    editing.h = Math.max(editing.h, size * 1.5);
+    clampToPage(editing);
+  }
+  updateTextPreview();
+  drawOverlay();
+};
 
 $("clearText").onclick = () => {
+  // Leaving edit mode deselects the box as well, or the bar would reopen.
+  if (selectedTextItem()) state.selected = -1;
   clearStagedText();
+  drawOverlay();
   toast("Staged text cleared.");
 };
 
