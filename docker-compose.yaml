@@ -1,0 +1,22 @@
+services:
+  pdf-signer:
+    build: 
+      context: .
+      args:
+        - "UID=${UID:?UID not set - create .env first}"
+        - "GID=${GID:?GID not set - create .env first}"
+    image: pdf-signer:1.2.0
+    container_name: pdf-signer-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

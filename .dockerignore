@@ -7,3 +7,4 @@ storage/
 .git/
 *.md
 run.sh
+.env
